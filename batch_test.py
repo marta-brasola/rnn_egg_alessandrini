@@ -22,8 +22,8 @@ rnn.subjs_test = (0, 1, 15, 16, 17)
 rnn.decimation = 0
 rnn.epochs = 20
 rnn.oversample = True
-rnn.pca = True
-rnn.rpca = True
+rnn.pca = False
+rnn.rpca = False
 rnn.spikes = 1/500
 rnn.rpca_mu = 0.1
 

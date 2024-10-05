@@ -45,7 +45,7 @@ multiscale_pca = False  # Compute MSPCA before PCA
 
 log_dir_base = working_dir + '/logs/fit'
 
-num_classes = 2
+num_classes = 3 ##TODO
 
 
 def create_dataset(window, overlap, decimation_factor = 0):
@@ -58,25 +58,48 @@ def create_dataset(window, overlap, decimation_factor = 0):
   tf.random.set_seed(42)
   np.random.seed(42)
   dataset_dir = working_dir + '/eeg2'
-  subj_list = tuple((f'{i:02d}', 'N') for i in range(1, 16)) + tuple((f'{i:02d}', 'AD') for i in range(1, 21))
-  print(subj_list)
-  num_columns = 16
+  
+  # da parametrizzare per essere più comodo 
+  import pandas as pd
+  csv_path = working_dir + '/config'
+  
+  
+  df = pd.read_csv(f"{csv_path}/annot_all_ftd-ad.csv")
+  
+  mapping = {
+    0: "ftd",
+    1: "ad"
+  }
+
+  df['label_map'] =  df['label'].map(mapping)
+  
+  # subj_list = tuple((f'{i:02d}', 'N') for i in range(1, 16)) + tuple((f'{i:02d}', 'AD') for i in range(1, 21)) 
+  subj_list = tuple(df.apply(lambda row: (row['crop_file'].split('.')[0], row['label_map']), axis=1))
+  print(subj_list[0:10])
+  num_columns = 19
+  # num_columns = 16
 
   x_data = np.empty((0, window, num_columns))
   y_data = np.empty((0, 1))  # labels
   subj_inputs = []  # number of inputs for every subject
   print('\n### creating dataset')
   tot_rows = 0
-  for subject in subj_list:
+  for i, subject in enumerate(subj_list):
+    print(f"index number:   {i}")
     subj_inputs.append(0)
-    category = ('N', 'AD').index(subject[1])
-    eeg = np.load(f'{dataset_dir}/S{subject[0]}_{subject[1]}.npz')['eeg'].T
+    # category = ('N', 'AD').index(subject[1]) ## assegna alle variabili 0 o 1 in base se N o AD
+    category = ('ftd', 'ad').index(subject[1]) 
+    import ipdb 
+    # eeg = np.load(f'{dataset_dir}/S{subject[0]}_{subject[1]}.npz')['eeg'].T
+    eeg = np.load(f'{dataset_dir}/{subject[0]}.npy').T
+    ipdb.set_trace()
+    print(f"shape of the eeg: {eeg.shape}")
     if spikes: eeg = set_holes(eeg, spikes)
     #scaler = MinMaxScaler(feature_range=(-1, 1))
     scaler = StandardScaler()
-    eeg = scaler.fit_transform(eeg)
+    eeg = scaler.fit_transform(eeg) ## applica lo standard scaler ad ogni registrazione eeg per intero 
     assert(eeg.shape[1] == num_columns)
-    tot_rows += len(eeg)
+    tot_rows += len(eeg) ## durata registrazione
     # decimation (optional)
     if decimation_factor:
       eeg2 = np.empty((eeg.shape[0] // decimation_factor, eeg.shape[1]))
@@ -89,7 +112,9 @@ def create_dataset(window, overlap, decimation_factor = 0):
     # compute number of windows (lazy way)
     i = 0
     num_w = 0
-    while i + window  <= len(eeg):
+    
+    ## window è definita prima 
+    while i + window  <= len(eeg): ## serve per capire in quante parti spezzere una registrazione
       i += (window - overlap)
       num_w += 1
     # compute actual windows
@@ -98,6 +123,8 @@ def create_dataset(window, overlap, decimation_factor = 0):
     for w in range(0, num_w):
       x_data_part[w] = eeg[i:i + window]
       i += (window - overlap)
+      
+       ## qui aggiungeree il watermark da cui proviente il crop?
       if False: # watermark provenience of every window
         for cc in range(0, num_columns):
           x_data_part[w, 0, cc] = 1000 * (len(subj_inputs) - 1) + cc
@@ -112,7 +139,6 @@ def create_dataset(window, overlap, decimation_factor = 0):
   print('class distribution:', [np.sum(y_data == cl) for cl in range(0, num_classes)])
 
   return x_data, y_data, subj_inputs
-
 
 def set_holes(A, prob):
   for i in range(0, len(A)):
@@ -269,9 +295,11 @@ def train_session(save_model = False, load_model = None, write_report = True, fi
 
   if write_report:
     output_file = time.strftime('%Y%m%d-%H%M%S') + file_id + '.txt'
-    out_f = open(working_dir + '/' + output_file, 'w')
+    out_f = open(working_dir + '/output/' + output_file, 'w')
   # tensorboard stuff
   #%rm -rf "$log_dir_base"
+  
+  
   log_dir = log_dir_base + '/' + datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
   for perm_index, permutation in enumerate(subjs_train_perm):
     assert(type(permutation) == tuple)
@@ -281,6 +309,9 @@ def train_session(save_model = False, load_model = None, write_report = True, fi
     assert(type(subjs_test) == tuple)
     tf.random.set_seed(42)
     np.random.seed(42)
+    
+    ## partition_data va a prendere i dati dalla lista che ha creato prima 
+    ## in subj_inputs solo quelli di train validation o test 
     x_data_train, y_data_train, _ = partition_data(permutation[0])  # train subjects
     x_data_val, y_data_val, _ = partition_data(permutation[1])  # validation subjects, can be None
     if oversample:
@@ -300,7 +331,11 @@ def train_session(save_model = False, load_model = None, write_report = True, fi
             for r in range(0, x_data_train.shape[1] // 2):
               x_data_train[w, r + x_data_train.shape[1] // 4 , c] = t
               t *= -1
+    
     # if train_split != 0, we ignore the provided x_data_val and split training in training + validation (Laura)
+    
+    # quindi visto che è settato a 0.75 fa in automatico questa roba 
+    
     if train_split:
       x_data_train, x_data_val, y_data_train, y_data_val = sklearn.model_selection.train_test_split(x_data_train, y_data_train, train_size = train_split, random_state=42, shuffle=True)
     #
@@ -320,10 +355,12 @@ def train_session(save_model = False, load_model = None, write_report = True, fi
         print('y_data_val:', y_data_val.shape, [np.sum(y_data_val == cl) for cl in range(0, num_classes)])
     else:
       Vpca = None
+    ## settato di default a None 
+    
     if load_model is None:
       model = create_model(x_data_train[0], dense1, lstm1, lstm2, lstm3)
       # draw model to PNG
-      keras.utils.plot_model(model, to_file = working_dir + '/model.pdf', show_shapes = True)
+      # keras.utils.plot_model(model, to_file = working_dir + '/model.pdf', show_shapes = True)
       # model training
       print(f'\n### training with {permutation[0]}, {len(x_data_train)} inputs, {len(x_data_val) if x_data_val is not None else 0} validation')
       callbacks = [keras.callbacks.TensorBoard(log_dir + f'_{perm_index + 1}', histogram_freq = 1)]
@@ -331,6 +368,8 @@ def train_session(save_model = False, load_model = None, write_report = True, fi
         callbacks.append(keras.callbacks.EarlyStopping('val_accuracy', min_delta = 0.001, patience = earlystop, restore_best_weights = True, verbose = 1))
       # train
       start_time = time.monotonic()
+      
+      ##TODO save model history (loss and accuracy)
       history = model.fit(x_data_train, y_data_train, epochs = epochs,
         validation_data = (x_data_val, y_data_val) if x_data_val is not None else None,
         callbacks = callbacks)
@@ -376,15 +415,19 @@ if __name__ == '__main__':
   lstm2 = 8
   lstm3 = 0
 
-  window = 256
+  # window = 256
+  window = 1000 # per avere due secondi sempre 
   overlap = window // 2
   oversample = True
   decimation = 0
-  pca = True  # compute PCA on full data matrix
-  rpca = True  # compute RPCA before PCA
+  pca = False  # compute PCA on full data matrix
+  rpca = False  # compute RPCA before PCA
   spikes = 1/500
   rpca_mu = 0.1
-
+  ## qui separa i soggetti di training da quelli di test 
+  ##TODO nel create dataset però va a mettere tutti i soggetti? 
+  ## quindi come fa a capire quali sono i soggetti di training da 
+  ## quelli di test
   subjs_train_perm = ( (tuple(i for i in range(2, 15)) + tuple(i for i in range(18, 35)), ()), )
   subjs_test = (0, 1, 15, 16, 17)  # 2 for N, 3 for AD
   epochs = 20
@@ -392,8 +435,11 @@ if __name__ == '__main__':
   if decimation:
     window //= decimation
     overlap //= decimation
-
+  ## questa funzione carica i dati e crea i crop in base alla window 
+  ## e overlap dati come parametri 
   x_data, y_data, subj_inputs = create_dataset(window, overlap, decimation)
+  
+  ## fare un oggetto che in base all'indice si prenda un oggetto con l'etichetta 
 
   model, x_data_test, y_data_test, test_acc = train_session(save_model = False, earlystop = 0)  # returned variables can be optionally used by other blocks of code
 

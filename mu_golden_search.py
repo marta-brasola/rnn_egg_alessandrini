@@ -15,8 +15,8 @@ rnn.epochs = 20
 rnn.oversample = True
 rnn.window = 256
 rnn.overlap = rnn.window // 2
-rnn.pca = True
-rnn.rpca = True
+rnn.pca = False
+rnn.rpca = False
 
 
 def f(mu):
